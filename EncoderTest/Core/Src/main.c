@@ -22,6 +22,7 @@
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include "pid.h"
+#include <stdio.h>
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -52,7 +53,15 @@ UART_HandleTypeDef huart2;
 
 // TIM_Encoder variables
 uint32_t counter = 0;
-int16_t count, position;
+int16_t count, previous_count = 0, delta;
+int32_t position = 0;
+int32_t scaled_position;
+
+// testing variables
+uint32_t time, previous_time, previous_time_2 = 0;
+uint32_t position_delta = 1;
+uint8_t direction = 1;
+
 
 
 // PID variables
@@ -77,9 +86,28 @@ static void MX_TIM2_Init(void);
 
 void HAL_TIM_IC_CaptureCallback(TIM_HandleTypeDef *htim)
 {
-	counter = __HAL_TIM_GET_COUNTER(htim);
-	count = (int16_t)counter;
-	position = count/4;
+    counter = __HAL_TIM_GET_COUNTER(htim);
+    count = (int16_t)counter;
+
+    // Calculate delta and detect overflow/underflow
+    delta = count - previous_count;
+
+    if (delta > 32767) {
+        // Underflow detected
+        position -= 65536;
+    } else if (delta < -32768) {
+        // Overflow detected
+        position += 65536;
+    }
+
+    // Accumulate the position
+    position += delta;
+
+    // Scale for encoder steps (divide by 4)
+    scaled_position = position / 4;
+    EncoderPosition = (double)scaled_position;
+    // Update the previous count
+    previous_count = count;
 }
 /* USER CODE END 0 */
 
@@ -116,21 +144,63 @@ int main(void)
   MX_TIM1_Init();
   MX_TIM2_Init();
   /* USER CODE BEGIN 2 */
+
+  // Timer Calls
   HAL_TIM_Encoder_Start_IT(&htim1, TIM_CHANNEL_ALL);
   HAL_TIM_PWM_Start(&htim2, TIM_CHANNEL_1);
   HAL_TIM_PWM_Start(&htim2, TIM_CHANNEL_2);
+  __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_1, 0);
+  __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_2, 0);
+
+  // PID calls
+  TargetPosition = 0;
+  PID(&TPID, &EncoderPosition, &PIDOut, &TargetPosition, 1500, 0, 9,  _PID_P_ON_E, _PID_CD_DIRECT);
+  PID_SetMode(&TPID, _PID_MODE_AUTOMATIC);
+  PID_SetSampleTime(&TPID, 1);
+  PID_SetOutputLimits(&TPID, -32767, 32767);
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
   while (1)
   {
-//	  	  HAL_Delay(10); // Adjust delay based on system requirements
-	      // Calculate error
-	      //error = target_position - position;
 
-	      //__HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_1, 0);
-	      //__HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_2, 0);
+	  	PID_Compute(&TPID);
+	    if(PIDOut > 0){
+	    	__HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_1, PIDOut);
+	    	__HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_2, 0);
+	    }else if (PIDOut < 0){
+	    	__HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_1, 0);
+	    	__HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_2, (PIDOut * -1));
+	    }else{
+	    	__HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_1, 0);
+	    	__HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_2, 0);
+	    }
+      // get time in ms
+      time = HAL_GetTick();
+      if (time - previous_time >= 1000) {
+        previous_time = time;
+//        if(direction){
+//        	TargetPosition += 10;
+//        }else{
+//           TargetPosition -= 10;
+//        }
+        
+        TargetPosition += 590;
+      }
+//      if (TargetPosition > 200) {
+//    	  direction = 0;
+//      }else if(TargetPosition < -1){
+//    	  direction = 1;
+//      }
+        //char buffer[10];
+        //sprintf(buffer, "%lf\n\r", EncoderPosition);
+        //HAL_UART_Transmit(&huart2, (uint8_t*)buffer, strlen(buffer), 60);
+
+
+        HAL_Delay(1);
+
+
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
